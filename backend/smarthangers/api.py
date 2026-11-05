@@ -22,6 +22,11 @@ from . import services as sv
 from .auth import ROLES, PERMISSIONS, Actor, Forbidden
 from .ifc_export import export_ifc
 from .labels import labels_pdf, labels_zpl, packlist_pdf
+from .ai import classify as ai_classify
+from .ai import client as ai_client
+from .ai import datasheet as ai_datasheet
+from .ai import normtid as ai_normtid
+from .ai import special as ai_special
 from .rules.engine import RuleError
 
 STATIC = Path(__file__).with_name("static")
@@ -179,6 +184,27 @@ class RulesetSelectIn(BaseModel):
     ruleset_id: int
 
 
+class AIClassifyIn(BaseModel):
+    scope: str = "okända"
+
+
+class AIApplyIn(BaseModel):
+    rows: list[int] = []
+    actions: list[int] = []
+    resolve_flag: bool = False
+    comment: str = ""
+
+
+class AIRejectIn(BaseModel):
+    comment: str = ""
+
+
+class StatusTimeIn(BaseModel):
+    status: str
+    comment: str = ""
+    duration_min: Optional[float] = None
+
+
 class CalcIn(BaseModel):
     inputs: dict = {}
     is_fixed_offer: bool = False
@@ -224,6 +250,14 @@ def create_app(db_url: Optional[str] = None) -> FastAPI:
     async def _re(_, e):
         return JSONResponse({"detail": f"Regelfel: {e}"}, status_code=400)
 
+    @app.exception_handler(ai_client.AIUnavailable)
+    async def _ai_off(_, e):
+        return JSONResponse({"detail": str(e)}, status_code=503)
+
+    @app.exception_handler(ai_client.AIError)
+    async def _ai_err(_, e):
+        return JSONResponse({"detail": f"AI: {e}"}, status_code=502)
+
     @app.exception_handler(Forbidden)
     async def _fb(_, e):
         return JSONResponse({"detail": str(e)}, status_code=403)
@@ -249,7 +283,8 @@ def create_app(db_url: Optional[str] = None) -> FastAPI:
         return {"roles": ROLES, "statuses": sv.STATUSES, "issues": sv.ISSUES,
                 "permissions": {k: sorted(v) for k, v in PERMISSIONS.items()},
                 "transitions": {k: {"roles": sorted(r), "from": sorted(f)} for k, (r, f) in sv.TRANSITIONS.items()},
-                "calc_labels": calcmod.LABELS}
+                "calc_labels": calcmod.LABELS,
+                "ai": {"enabled": ai_client.is_enabled(), "model": ai_client.model_name()}}
 
     # ---- projekt -------------------------------------------------------------
     @app.get("/api/projects")
@@ -376,10 +411,10 @@ def create_app(db_url: Optional[str] = None) -> FastAPI:
         return sv.delete_hanger(s, a, p, h, comment)
 
     @app.post("/api/projects/{pid}/hangers/{code}/status")
-    def hanger_status(pid: int, code: str, body: StatusIn, s: Session = Depends(get_session), a: Actor = Depends(actor)):
+    def hanger_status(pid: int, code: str, body: StatusTimeIn, s: Session = Depends(get_session), a: Actor = Depends(actor)):
         p = project_or_404(s, pid)
         h = hanger_or_404(s, p, code)
-        sv.set_status(s, a, p, h, body.status, body.comment)
+        sv.set_status(s, a, p, h, body.status, body.comment, duration_min=body.duration_min)
         return ser_hanger(h)
 
     @app.post("/api/projects/{pid}/hangers-bulk-status")
@@ -397,6 +432,7 @@ def create_app(db_url: Optional[str] = None) -> FastAPI:
 
     @app.post("/api/projects/{pid}/hangers/{code}/report")
     async def hanger_report(pid: int, code: str, action: str = Form(...), comment: str = Form(""),
+                            duration_min: Optional[float] = Form(None),
                             photo: Optional[UploadFile] = File(None), s: Session = Depends(get_session), a: Actor = Depends(actor)):
         """Kvittens från montage/produktion med valfritt foto. action = status eller avvikelsetyp."""
         p = project_or_404(s, pid)
@@ -409,7 +445,7 @@ def create_app(db_url: Optional[str] = None) -> FastAPI:
             fname = f"{uuid.uuid4().hex}{ext}"
             (photo_dir / fname).write_bytes(await photo.read())
         if action in sv.TRANSITIONS:
-            sv.set_status(s, a, p, h, action, comment, fname)
+            sv.set_status(s, a, p, h, action, comment, fname, duration_min=duration_min)
         elif action == "kommentar":
             sv.log(s, p.id, a, "kommentar", h, {"comment": comment}, fname)
         else:
@@ -640,6 +676,107 @@ def create_app(db_url: Optional[str] = None) -> FastAPI:
             raise HTTPException(404)
         sv.verify_ruleset(s, a, rs, body.comment)
         return ser_ruleset(rs)
+
+    # ---- AI-förslag och normtider ---------------------------------------------
+    def ser_suggestion(x: m.AISuggestion):
+        return {"id": x.id, "project_id": x.project_id, "kind": x.kind, "target": x.target, "output": x.output,
+                "validation": x.validation, "model": x.model, "usage": x.usage, "source_file": x.source_file,
+                "status": x.status, "created_by": x.created_by, "created_at": x.created_at,
+                "decided_by": x.decided_by, "decided_at": x.decided_at, "decision": x.decision}
+
+    def suggestion_or_404(s, sid):
+        x = s.get(m.AISuggestion, sid)
+        if not x:
+            raise HTTPException(404, "AI-förslaget finns inte")
+        return x
+
+    @app.get("/api/ai/status")
+    def ai_status():
+        return {"enabled": ai_client.is_enabled(), "model": ai_client.model_name()}
+
+    @app.post("/api/projects/{pid}/ai/classify")
+    def ai_classify_run(pid: int, body: AIClassifyIn, s: Session = Depends(get_session), a: Actor = Depends(actor)):
+        p = project_or_404(s, pid)
+        rev = sv.current_revision(p)
+        if not rev:
+            raise HTTPException(400, "Ingen modell importerad")
+        x = ai_classify.propose(s, a, p, rev, sv.rules_for(p), body.scope)
+        sv.log(s, pid, a, "ai.klassning.forslag", details={"suggestion": x.id, "rows": len(x.output["rows"])})
+        return ser_suggestion(x)
+
+    @app.get("/api/projects/{pid}/ai/classify/candidates")
+    def ai_classify_candidates(pid: int, s: Session = Depends(get_session)):
+        p = project_or_404(s, pid)
+        rev = sv.current_revision(p)
+        if not rev:
+            return {"count": 0}
+        c = ai_classify.candidates(rev, sv.rules_for(p))
+        return {"count": len(c), "examples": [{"system": x.system, "material": x.material} for x in c[:5]]}
+
+    @app.post("/api/projects/{pid}/flags/{fid}/ai")
+    def ai_flag(pid: int, fid: int, s: Session = Depends(get_session), a: Actor = Depends(actor)):
+        p = project_or_404(s, pid)
+        f = s.get(m.Flag, fid)
+        if not f or f.project_id != pid:
+            raise HTTPException(404)
+        x = ai_special.propose(s, a, p, f)
+        sv.log(s, pid, a, "ai.specialfall.forslag", details={"suggestion": x.id, "flag": fid, "code": f.code})
+        return ser_suggestion(x)
+
+    @app.post("/api/rulesets/{rid}/ai/datasheet")
+    async def ai_datasheet_run(rid: int, file: UploadFile = File(...), s: Session = Depends(get_session), a: Actor = Depends(actor)):
+        rs = s.get(m.RuleSet, rid)
+        if not rs:
+            raise HTTPException(404)
+        x = ai_datasheet.propose(s, a, rs, file.filename or "produktblad.pdf", await file.read())
+        return ser_suggestion(x)
+
+    @app.get("/api/ai/suggestions")
+    def ai_list(project_id: Optional[int] = None, kind: Optional[str] = None, ruleset_id: Optional[int] = None,
+                s: Session = Depends(get_session)):
+        q = select(m.AISuggestion).order_by(m.AISuggestion.id.desc())
+        if project_id is not None:
+            q = q.where(m.AISuggestion.project_id == project_id)
+        if kind:
+            q = q.where(m.AISuggestion.kind == kind)
+        out = [ser_suggestion(x) for x in s.scalars(q.limit(100))]
+        if ruleset_id is not None:
+            out = [x for x in out if x["target"].get("ruleset_id") == ruleset_id]
+        return out
+
+    @app.get("/api/ai/suggestions/{sid}")
+    def ai_get(sid: int, s: Session = Depends(get_session)):
+        return ser_suggestion(suggestion_or_404(s, sid))
+
+    @app.post("/api/ai/suggestions/{sid}/apply")
+    def ai_apply(sid: int, body: AIApplyIn, s: Session = Depends(get_session), a: Actor = Depends(actor)):
+        x = suggestion_or_404(s, sid)
+        if x.kind == "klassning":
+            res = ai_classify.apply(s, a, project_or_404(s, x.project_id), x, body.rows, body.comment)
+        elif x.kind == "specialfall":
+            res = ai_special.apply(s, a, project_or_404(s, x.project_id), x, body.actions, body.resolve_flag, body.comment)
+        elif x.kind == "produktblad":
+            draft = ai_datasheet.apply(s, a, x, body.rows, body.comment)
+            res = {"status": x.status, "draft": ser_ruleset(draft) if draft else None}
+        else:
+            raise HTTPException(400, "Okänd förslagstyp")
+        return {"suggestion": ser_suggestion(x), **res}
+
+    @app.post("/api/ai/suggestions/{sid}/reject")
+    def ai_reject(sid: int, body: AIRejectIn, s: Session = Depends(get_session), a: Actor = Depends(actor)):
+        x = suggestion_or_404(s, sid)
+        perm = {"klassning": "ai.godkann_klassning", "specialfall": "hangers.redigera", "produktblad": "regler.redigera"}[x.kind]
+        a.require(perm)
+        if x.status != "föreslagen":
+            raise HTTPException(400, "Förslaget är redan beslutat")
+        x.status, x.decided_by, x.decided_at, x.decision = "avvisad", a.user, m.now(), {"comment": body.comment}
+        if x.project_id:
+            sv.log(s, x.project_id, a, f"ai.{x.kind}.avvisad", details={"suggestion": x.id, "comment": body.comment})
+        return ser_suggestion(x)
+
+    @app.get("/api/normtid")
+    def normtid(project_id: Optional[int] = None, s: Session = Depends(get_session)):
+        return ai_normtid.report(s, project_id)
 
     # ---- QR & webbapp ----------------------------------------------------------
     @app.get("/q/{pid}/{code}")

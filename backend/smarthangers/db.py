@@ -109,6 +109,12 @@ class Pipe(Base):
     insulation: Mapped[float] = mapped_column(Float, default=0.0)
     classification: Mapped[str] = mapped_column(String(20), default="")
     z_override: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # världs-z för rörcentrum
+    # Originalvärden ur IFC och källa för gällande material/system (modell | godkänt AI-förslag)
+    material_raw: Mapped[str] = mapped_column(String(200), default="")
+    system_raw: Mapped[str] = mapped_column(String(200), default="")
+    material_source: Mapped[str] = mapped_column(String(120), default="modell")
+    system_source: Mapped[str] = mapped_column(String(120), default="modell")
+    attributes: Mapped[dict] = mapped_column(JSON, default=dict)
 
     def as_input(self):
         return {"global_id": self.global_id, "name": self.name, "storey": self.storey, "start": self.start, "end": self.end,
@@ -233,6 +239,27 @@ class Event(Base):
     photo: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
 
 
+class AISuggestion(Base):
+    """AI-förslag. Tillämpas aldrig automatiskt – kräver beslut av behörig användare."""
+    __tablename__ = "ai_suggestions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[Optional[int]] = mapped_column(ForeignKey("projects.id"), nullable=True, index=True)
+    kind: Mapped[str] = mapped_column(String(30))  # klassning | specialfall | produktblad
+    target: Mapped[dict] = mapped_column(JSON, default=dict)
+    output: Mapped[dict] = mapped_column(JSON, default=dict)
+    validation: Mapped[dict] = mapped_column(JSON, default=dict)
+    model: Mapped[str] = mapped_column(String(80), default="")
+    request_id: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    usage: Mapped[dict] = mapped_column(JSON, default=dict)
+    source_file: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="föreslagen")  # föreslagen | godkänd | delvis | avvisad
+    created_by: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    decided_by: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    decided_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    decision: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
 class Calculation(Base):
     __tablename__ = "calculations"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -261,6 +288,37 @@ def make_engine(url: Optional[str] = None):
     return eng
 
 
+def _add_missing_columns(engine):
+    """Enkel framåtmigrering: lägger till kolumner som tillkommit i nya versioner.
+
+    Nya kolumner läggs till som nullable med standardvärde, så befintliga data
+    behålls. (Byt till Alembic när schemat börjar ändras på andra sätt.)
+    """
+    from sqlalchemy import inspect, text
+    insp = inspect(engine)
+    existing_tables = set(insp.get_table_names())
+    with engine.begin() as conn:
+        for table in Base.metadata.sorted_tables:
+            if table.name not in existing_tables:
+                continue
+            have = {c["name"] for c in insp.get_columns(table.name)}
+            for col in table.columns:
+                if col.name in have:
+                    continue
+                ddl = f'ALTER TABLE {table.name} ADD COLUMN {col.name} {col.type.compile(engine.dialect)}'
+                default = getattr(col.default, "arg", None)
+                if isinstance(default, str):
+                    ddl += " DEFAULT '" + default.replace("'", "''") + "'"
+                elif isinstance(default, bool):
+                    ddl += f" DEFAULT {'TRUE' if default else 'FALSE'}"
+                elif isinstance(default, (int, float)):
+                    ddl += f" DEFAULT {default}"
+                conn.execute(text(ddl))
+                if callable(default) and col.type.__class__.__name__ == "JSON":
+                    conn.execute(text(f"UPDATE {table.name} SET {col.name} = '{{}}' WHERE {col.name} IS NULL"))
+
+
 def init_db(engine):
     Base.metadata.create_all(engine)
+    _add_missing_columns(engine)
     return sessionmaker(bind=engine, expire_on_commit=False)

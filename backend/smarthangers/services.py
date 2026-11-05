@@ -210,10 +210,17 @@ def import_revision(s: Session, actor: Actor, p: m.Project, filename: str, conte
         d.pop("storey_elevation", None)
         d.pop("z_source", None)
         pipe = m.Pipe(revision_id=rev.id, **{k: (list(v) if isinstance(v, tuple) else v) for k, v in d.items()})
+        pipe.material_raw, pipe.system_raw = pipe.material, pipe.system
         pipe.classification = classify(pipe.as_input(), rules)
         old = prev_pipes.get(ip.global_id)
         if old is not None and old.z_override is not None and _same_geometry(old, pipe, 1.0):
             pipe.z_override = old.z_override  # manuell höjd följer med oförändrat rör
+        if old is not None:
+            # Godkända AI-tolkningar följer med så länge originalvärdet i modellen är oförändrat
+            if old.material_source != "modell" and old.material_raw == pipe.material_raw:
+                pipe.material, pipe.material_source = old.material, old.material_source
+            if old.system_source != "modell" and old.system_raw == pipe.system_raw:
+                pipe.system, pipe.system_source = old.system, old.system_source
         s.add(pipe)
     for c in res.components:
         d = asdict(c)
@@ -615,7 +622,8 @@ def set_run_takjarn(s: Session, actor: Actor, p: m.Project, storey: str, run_key
 # --------------------------------------------------------------------------
 # Status och avvikelser
 # --------------------------------------------------------------------------
-def set_status(s: Session, actor: Actor, p: m.Project, h: m.Hanger, status: str, comment: str = "", photo: Optional[str] = None):
+def set_status(s: Session, actor: Actor, p: m.Project, h: m.Hanger, status: str, comment: str = "", photo: Optional[str] = None,
+               duration_min: Optional[float] = None):
     if status not in TRANSITIONS:
         raise ServiceError(f"Okänd status: {status}")
     roles, allowed_from = TRANSITIONS[status]
@@ -635,7 +643,12 @@ def set_status(s: Session, actor: Actor, p: m.Project, h: m.Hanger, status: str,
         h.issue, h.issue_comment = None, None
     if status in ("granskad", "godkänd", "föreslagen") and status_index(status) < status_index(prev):
         _revoke_approvals(s, actor, p, f"{h.code} återställd till {status}")
-    log(s, p.id, actor, f"status.{status}", h, {"from": prev, "to": status, "comment": comment}, photo)
+    details = {"from": prev, "to": status, "comment": comment}
+    if duration_min is not None:
+        if not 0 < duration_min < 600:
+            raise ServiceError("Tidsåtgång måste vara mellan 0 och 600 minuter.")
+        details["duration_min"] = float(duration_min)
+    log(s, p.id, actor, f"status.{status}", h, details, photo)
 
 
 def bulk_status(s: Session, actor: Actor, p: m.Project, hangers: list[m.Hanger], status: str, comment: str = "") -> dict:

@@ -111,6 +111,24 @@ Regelmotorn är versionshanterad och redigerbar: *Regler* i menyn, eller `GET/PO
 
 Versionerna går igenom stegen utkast → publicerad (låst) → verifierad. Varje hanger lagrar vilken regelversion och vilka regelrader som styrt den.
 
+## AI-stöd (förslag med mänsklig granskning)
+
+AI används bara där underlaget är otydligt. Den används aldrig för själva konstruktionsbesluten: regelmotorn räknar fortfarande fram all geometri och alla laster. Varje AI-svar sparas som ett **förslag** (`AISuggestion`) med modell, request-id, underlag och beslut. Inget ändras förrän en behörig person godkänner, och resultatet kontrolleras av regelmotorn. Funktionerna använder Claude via Anthropic API (`claude-opus-5-5`, strukturerade JSON-svar).
+
+| Funktion | Var | Vad AI gör | Vem beslutar |
+|---|---|---|---|
+| Röriga modeller | Granskning → *Tolka okända material/system* | Föreslår material och system för rör där de saknas eller är fritext, utifrån namn och egenskaper i IFC-filen, med säkerhetsgrad och motivering. | Granskare godkänner rad för rad. Originalvärdet ur IFC sparas och godkända tolkningar följer med till nästa revision så länge modellvärdet är oförändrat. |
+| Specialfall | Granskning → *AI-förslag* på en flagga | Bedömer fallet och föreslår åtgärder: lägg till, flytta eller ta bort upphängning, sätt rörhöjd eller en manuell åtgärd. Underlaget är närliggande rör, hinder, stråkets krav och spärrzoner och de gällande reglerna. | Granskaren väljer åtgärder. De körs allt-eller-inget via samma funktioner som manuell granskning, och regelavvikelser visas. |
+| Produktblad | Regler → *Läs in produktblad (AI)* | Läser tillverkarens PDF och plockar ut svep, rörvikter, klamringsavstånd, tillåtna pendellaster och takjärn med sidnummer och citat. Servern validerar raderna och visar vad de ersätter. | Valda rader blir ett **regelutkast** som sedan publiceras och verifieras av tekniskt ansvarig som vanligt. |
+| Normtider | Kalkyl → *Normtider från uppföljning* | **Ingen språkmodell, bara statistik.** Median, spridning och bootstrap-intervall av montage- och produktionstider. Underlaget är kvittenser: tid som anges vid kvittens, eller tiden mellan två kvittenser i följd av samma person. | Kalkylatorn väljer om förslaget ska användas. Förslag ges först från 10 kvittenser. |
+
+Aktivera genom att sätta `ANTHROPIC_API_KEY` på servern (i Railway: *Variables*). Utan nyckel fungerar allt annat som vanligt och AI-knapparna döljs.
+
+- `SMARTHANGERS_AI_MODEL` byter modell.
+- Serverside fallback vid policyavslag är på som standard. `SMARTHANGERS_AI_FALLBACKS=0` stänger av den.
+- `SMARTHANGERS_AI_DISABLED=1` stänger av AI-stödet helt.
+- IFC-attribut och produktblad skickas till Anthropic API vid anrop. Kontrollera att det är förenligt med era avtal.
+
 ## Arkitektur
 
 | Område | Implementation |
@@ -130,6 +148,7 @@ backend/smarthangers/
   rules/             regelmotor + standardregler (exempel)
   services.py        projekt, revisioner, generering, granskning, status, packning
   calc.py            offert-/kalkylmodul
+  ai/                AI-förslag (klassning, specialfall, produktblad) + normtidsstatistik
   labels.py          etiketter och packlistor
   ifc_export.py      kompletterad IFC
   api.py             REST-API och webbapp

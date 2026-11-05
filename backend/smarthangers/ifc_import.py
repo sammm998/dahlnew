@@ -39,6 +39,7 @@ class ImportedPipe:
     system: str
     insulation: float = 0.0
     z_source: str = "model"
+    attributes: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -118,6 +119,24 @@ def _material_name(el) -> str:
             m = getattr(first, "Material", first)
             return getattr(m, "Name", None) or "Okänt"
     return getattr(mat, "Name", None) or "Okänt"
+
+
+def _attributes(el, psets, max_items: int = 40) -> dict:
+    """Utvalda textattribut (för AI-tolkning av ofullständiga modeller). Begränsad storlek."""
+    out = {}
+    t = uel.get_type(el)
+    for k, v in (("Name", el.Name), ("ObjectType", getattr(el, "ObjectType", None)), ("Description", el.Description),
+                 ("Tag", getattr(el, "Tag", None)), ("TypeName", getattr(t, "Name", None) if t else None)):
+        if v:
+            out[k] = str(v)[:120]
+    for pname, props in psets.items():
+        for k, v in props.items():
+            if k == "id" or v is None or isinstance(v, (dict, list)):
+                continue
+            if len(out) >= max_items:
+                return out
+            out[f"{pname}.{k}"] = str(v)[:120]
+    return out
 
 
 def _system_name(el, psets) -> str:
@@ -221,6 +240,7 @@ def import_ifc(path: str) -> ImportResult:
             start=tuple(round(float(x), 1) for x in p0), end=tuple(round(float(x), 1) for x in p1),
             outer_diameter=round(float(od), 1), nominal_diameter=round(dn, 1) if dn else None,
             material=_material_name(el), system=_system_name(el, psets), insulation=round(ins, 1),
+            attributes=_attributes(el, psets),
         ))
 
     def add_components(classes, kind):

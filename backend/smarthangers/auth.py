@@ -35,6 +35,10 @@ PERMISSIONS = {
     "produktion.utfor": {"produktion"},
     "lager.hantera": {"lager"},
     "montage.utfor": {"montor"},
+    # AI-förslag: beställa och besluta är separata behörigheter
+    "ai.klassning": {"projektadmin", "granskare"},
+    "ai.godkann_klassning": {"granskare"},
+    "ai.specialfall": {"granskare"},
 }
 
 

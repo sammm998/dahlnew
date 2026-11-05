@@ -684,9 +684,11 @@ async function viewReview(pid) {
         </tbody></table>
       </div>
       <div class="card">
+        ${aiCard(pid)}
         <h2>Flaggor att hantera (${flags.length})</h2>
         <p class="small muted">Specialfall som MVP:n inte hanterar automatiskt flaggas för manuell granskning.</p>
-        ${flags.length ? html`<table class="small"><tbody>${flags.map((f) => html`<tr><td>${sev(f.severity)}</td><td><b>${f.code}</b> · ${f.storey} ${f.run_key ? '· ' + f.run_key : ''}<br>${f.message}</td><td>${can('flaggor.hantera') ? html`<button data-resolve="${f.id}">Hantera</button>` : ''}</td></tr>`)}</tbody></table>` : html`<p class="muted">Inga öppna flaggor.</p>`}
+        ${flags.length ? html`<table class="small"><tbody>${flags.map((f) => html`<tr><td>${sev(f.severity)}</td><td><b>${f.code}</b> · ${f.storey} ${f.run_key ? '· ' + f.run_key : ''}<br>${f.message}</td><td class="row">${can('ai.specialfall') && state.meta.ai.enabled ? html`<button data-aiflag="${f.id}" title="Be AI om ett lösningsförslag">AI-förslag</button>` : ''}${can('flaggor.hantera') ? html`<button data-resolve="${f.id}">Hantera</button>` : ''}</td></tr>`)}</tbody></table>` : html`<p class="muted">Inga öppna flaggor.</p>`}
+        <div id="aiout"></div>
       </div></div>`.s;
     $('#flt').onchange = (e) => { filter = e.target.value; store.set('sh.revfilter', filter); draw(); };
     $('#all')?.addEventListener('change', (e) => $$('[data-code]').forEach((c) => { c.checked = e.target.checked; }));
@@ -697,6 +699,14 @@ async function viewReview(pid) {
       toast(`${r.ok.length} uppdaterade${r.failed.length ? `, ${r.failed.length} misslyckades: ${r.failed[0].error}` : ''}`, !!r.failed.length);
       viewReview(pid);
     }));
+    bindAiCard(pid, () => viewReview(pid));
+    $$('[data-aiflag]').forEach((b) => b.addEventListener('click', async () => {
+      b.disabled = true; b.textContent = 'AI analyserar…';
+      try {
+        const sug = await act(() => api(`/api/projects/${pid}/flags/${b.dataset.aiflag}/ai`, { method: 'POST' }));
+        showSpecialSuggestion(pid, sug, () => viewReview(pid));
+      } finally { b.disabled = false; b.textContent = 'AI-förslag'; }
+    }));
     $$('[data-resolve]').forEach((b) => b.addEventListener('click', async () => {
       const f = await ask('Hantera flagga', { fields: [{ name: 'resolution', label: 'Beslut / åtgärd', type: 'textarea' }], ok: 'Markera hanterad' });
       if (!f?.resolution) return;
@@ -705,6 +715,160 @@ async function viewReview(pid) {
     }));
   };
   draw();
+}
+
+// ---------------------------------------------------------------------------
+// AI-förslag (kräver alltid mänskligt beslut)
+// ---------------------------------------------------------------------------
+const aiNote = () => html`<p class="small muted">AI-förslag från ${state.meta.ai.model}. Förslagen kan vara fel – granska mot modell och underlag. Inget ändras förrän du godkänner, och regelmotorn kontrollerar resultatet.</p>`;
+const conf = (c) => html`<span class="chip ${c === 'hög' ? 'st-godkänd' : c === 'medel' ? 'sev-varning' : 'sev-kritisk'}">${c}</span>`;
+
+function aiCard(pid) {
+  if (!can('ai.klassning')) return '';
+  if (!state.meta.ai.enabled) return html`<div class="banner small">AI-stöd är avstängt. Sätt <code>ANTHROPIC_API_KEY</code> på servern för att aktivera tolkning av röriga modeller och förslag på specialfall.</div>`;
+  return html`<div style="margin-bottom:16px"><h2>AI-tolkning av modell</h2>
+    <p class="small">Tolkar rör där material eller system saknas eller inte känns igen, utifrån namn och egenskaper i IFC-filen.</p>
+    <div class="row"><button id="aiclassify" class="primary">Tolka okända material/system</button><span id="aicand" class="small muted"></span></div>
+    <div id="aiclass"></div></div>`;
+}
+
+async function bindAiCard(pid, refresh) {
+  const btn = $('#aiclassify');
+  if (!btn) return;
+  api(`/api/projects/${pid}/ai/classify/candidates`).then((c) => { $('#aicand').textContent = `${c.count} rör behöver tolkas`; if (!c.count) btn.disabled = true; });
+  const open = (await api(`/api/ai/suggestions?project_id=${pid}&kind=klassning`)).find((x) => x.status === 'föreslagen');
+  if (open) showClassSuggestion(pid, open, refresh);
+  btn.addEventListener('click', async () => {
+    btn.disabled = true; btn.textContent = 'AI tolkar…';
+    try { const sug = await act(() => api(`/api/projects/${pid}/ai/classify`, { body: { scope: 'okända' } })); showClassSuggestion(pid, sug, refresh); }
+    finally { btn.disabled = false; btn.textContent = 'Tolka okända material/system'; }
+  });
+}
+
+function showClassSuggestion(pid, sug, refresh) {
+  const rows = sug.output.rows;
+  const decide = can('ai.godkann_klassning');
+  $('#aiclass').innerHTML = html`<div class="card" style="margin-top:10px">
+    <div class="row"><b>Förslag #${sug.id}</b><span class="chip">${sug.status}</span><span class="small muted">${sug.target.revision} · ${dt(sug.created_at)} · ${sug.created_by}</span></div>
+    ${aiNote()}
+    ${sug.validation?.truncated ? html`<div class="banner warn small">Fler unika rörtyper än vad som skickades – kör igen efter beslut.</div>` : ''}
+    <table class="small"><thead><tr><th></th><th>I modellen</th><th>Förslag</th><th>Säkerhet</th><th>Motivering</th></tr></thead><tbody>
+    ${rows.map((r) => html`<tr><td><input type="checkbox" data-crow="${r.row}" ${decide && r.confidence !== 'låg' && r.material !== 'Okänt' ? raw('checked') : ''} ${decide ? '' : raw('disabled')}></td>
+      <td>${r.current_material}<br><span class="muted">${r.current_system}</span><br><span class="muted">${r.count} rör</span></td>
+      <td><b>${r.material}</b><br>${r.system_name || r.system_category}</td><td>${conf(r.confidence)}</td><td>${r.rationale}</td></tr>`)}
+    </tbody></table>
+    ${decide && sug.status === 'föreslagen' ? html`<div class="row" style="margin-top:8px"><button class="primary" id="capply">Godkänn markerade</button><button id="creject">Avvisa</button></div>` : html`<p class="small muted">Godkänns av BIM-/konstruktionsgranskare.</p>`}
+  </div>`.s;
+  $('#capply')?.addEventListener('click', async () => {
+    const sel = $$('[data-crow]').filter((c) => c.checked).map((c) => Number(c.dataset.crow));
+    const r = await act(() => api(`/api/ai/suggestions/${sug.id}/apply`, { body: { rows: sel } }));
+    toast(`${r.changes} ändringar – generera om upphängningarna`);
+    refresh();
+  });
+  $('#creject')?.addEventListener('click', async () => {
+    const f = await ask('Avvisa förslag', { fields: [{ name: 'comment', label: 'Motivering' }], ok: 'Avvisa' });
+    if (!f) return;
+    await act(() => api(`/api/ai/suggestions/${sug.id}/reject`, { body: f }), 'Avvisat');
+    refresh();
+  });
+}
+
+function actionText(a) {
+  const t = { add_hanger: 'Lägg till upphängning', move_hanger: 'Flytta upphängning', remove_hanger: 'Ta bort upphängning', set_pipe_height: 'Sätt rörhöjd', manual_note: 'Manuell åtgärd' }[a.type];
+  const where = a.type === 'add_hanger' ? ` · ${a.storey || ''} ${a.run_key} s=${fmt(a.s)}`
+    : a.type === 'move_hanger' ? ` · ${a.hanger_code} → s=${fmt(a.s)}`
+    : a.type === 'remove_hanger' ? ` · ${a.hanger_code}`
+    : a.type === 'set_pipe_height' ? ` · ${a.height_mode === 'bottom' ? 'UK' : 'CL'} +${fmt(a.value)}` : '';
+  return `${t}${where}`;
+}
+
+function showSpecialSuggestion(pid, sug, refresh) {
+  const o = sug.output;
+  const box = $('#aiout');
+  box.innerHTML = html`<div class="card" style="margin-top:12px">
+    <div class="row"><h3 style="margin:0">AI-förslag #${sug.id} · ${sug.target.code}</h3><span class="chip ${o.risk === 'hög' ? 'sev-kritisk' : o.risk === 'medel' ? 'sev-varning' : 'sev-info'}">risk ${o.risk}</span>${o.requires_expert ? html`<span class="chip sev-kritisk">kräver tekniskt sakkunnig</span>` : ''}</div>
+    ${aiNote()}
+    <p>${o.assessment}</p>
+    <h3>Åtgärder</h3>
+    ${o.actions.length ? html`<ol class="steps">${o.actions.map((a, i) => html`<li><input type="checkbox" data-act="${i}" ${a.type === 'manual_note' ? raw('checked') : ''}><span><b>${actionText(a)}</b><br><span class="small">${a.description}</span></span></li>`)}</ol>` : html`<p class="muted">Inga åtgärder föreslogs.</p>`}
+    ${o.notes_for_reviewer.length ? html`<h3>Att kontrollera</h3><ul class="small">${o.notes_for_reviewer.map((n) => html`<li>${n}</li>`)}</ul>` : ''}
+    <label class="small"><input type="checkbox" id="sresolve"> Markera flaggan som hanterad</label>
+    <div class="row" style="margin-top:8px"><button class="primary" id="sapply">Utför valda åtgärder</button><button id="sreject">Avvisa förslaget</button></div>
+    <p class="small muted">Åtgärderna utförs tillsammans – misslyckas en görs inga ändringar. Positioner kontrolleras mot regelmotorn.</p>
+  </div>`.s;
+  box.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  $('#sapply').addEventListener('click', async () => {
+    const actions = $$('[data-act]', box).filter((c) => c.checked).map((c) => Number(c.dataset.act));
+    const r = await act(() => api(`/api/ai/suggestions/${sug.id}/apply`, { body: { actions, resolve_flag: $('#sresolve').checked } }));
+    const viol = r.results.flatMap((x) => x.violations || []);
+    toast(`${r.results.length} åtgärder utförda${viol.length ? ' · regelavvikelser: ' + viol.map((v) => v[2]).join('; ') : ''}`, !!viol.length);
+    refresh();
+  });
+  $('#sreject').addEventListener('click', async () => {
+    await act(() => api(`/api/ai/suggestions/${sug.id}/reject`, { body: { comment: '' } }), 'Avvisat');
+    box.innerHTML = '';
+  });
+}
+
+/** Produktblad → regelutkast (regelbiblioteket). */
+function datasheetCard(rid) {
+  if (!can('regler.redigera') || !state.meta.ai.enabled) return '';
+  return html`<div class="card" style="margin-top:16px"><h2>Läs in produktblad (AI)</h2>
+    <p class="small">Ladda upp tillverkarens produktblad (PDF). AI:n plockar ut svep, rörvikter, klamringsavstånd, pendellaster och takjärn med sidhänvisning. Du väljer rader och får ett nytt <b>utkast</b> som sedan publiceras och verifieras som vanligt.</p>
+    <form id="dsform" class="row"><input type="file" name="file" accept=".pdf,.txt,.csv,.md" required><button class="primary">Läs in</button></form>
+    <div id="dsout"></div></div>`;
+}
+
+const SECTION_LABEL = { clamps: 'Svep', pipe_weight: 'Rörvikt', spacing: 'Klamringsavstånd', rod_capacity: 'Pendellast', takjarn: 'Takjärn' };
+
+function showDatasheet(sug) {
+  const o = sug.output;
+  $('#dsout').innerHTML = html`<div style="margin-top:10px">
+    <div class="row"><b>Förslag #${sug.id}</b><span class="chip">${sug.status}</span><span class="small muted">${sug.source_file} · ${o.manufacturer} ${o.product}</span></div>
+    ${aiNote()}
+    ${o.warnings.length ? html`<div class="banner warn small">${o.warnings.map((w) => html`<div>⚠ ${w}</div>`)}</div>` : ''}
+    ${o.rows.length ? html`<table class="small"><thead><tr><th></th><th>Område</th><th>Värden</th><th>Källa</th><th>Ersätter</th></tr></thead><tbody>
+      ${o.rows.map((r) => html`<tr><td><input type="checkbox" data-dsrow="${r.id}" ${r.ok ? raw('checked') : raw('disabled')}></td><td>${SECTION_LABEL[r.section]}</td>
+        <td class="mono" style="font-size:11px">${Object.entries(r.values).filter(([, v]) => v !== null && v !== '').map(([k, v]) => `${k}=${v}`).join(' ')}${r.problems.length ? html`<br><span class="neg">${r.problems.join('; ')}</span>` : ''}</td>
+        <td>s.${r.source.page ?? '?'} “${r.source.quote}”${r.source.note ? html`<br><span class="muted">${r.source.note}</span>` : ''}</td><td class="mono" style="font-size:11px">${r.replaces.join(' ') || 'ny'}</td></tr>`)}
+    </tbody></table>` : html`<p class="muted">Inga värden hittades i dokumentet.</p>`}
+    ${sug.status === 'föreslagen' ? html`<div class="row" style="margin-top:8px"><button class="primary" id="dsapply">Skapa regelutkast av markerade</button><button id="dsreject">Avvisa</button></div>` : ''}
+  </div>`.s;
+  $('#dsapply')?.addEventListener('click', async () => {
+    const rows = $$('[data-dsrow]').filter((c) => c.checked).map((c) => Number(c.dataset.dsrow));
+    const r = await act(() => api(`/api/ai/suggestions/${sug.id}/apply`, { body: { rows } }), 'Regelutkast skapat – kontrollera, publicera och verifiera');
+    if (r.draft) location.hash = `#/rules/${r.draft.id}`;
+  });
+  $('#dsreject')?.addEventListener('click', async () => {
+    await act(() => api(`/api/ai/suggestions/${sug.id}/reject`, { body: { comment: '' } }), 'Avvisat');
+    $('#dsout').innerHTML = '';
+  });
+}
+
+function bindDatasheet(rid) {
+  $('#dsform')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const b = e.target.querySelector('button');
+    b.disabled = true; b.textContent = 'AI läser produktbladet…';
+    try { showDatasheet(await act(() => api(`/api/rulesets/${rid}/ai/datasheet`, { body: new FormData(e.target) }))); }
+    finally { b.disabled = false; b.textContent = 'Läs in'; }
+  });
+  if (can('regler.redigera')) api(`/api/ai/suggestions?kind=produktblad&ruleset_id=${rid}`).then((l) => { const open = l.find((x) => x.status === 'föreslagen'); if (open && $('#dsout')) showDatasheet(open); });
+}
+
+/** Normtider från uppföljning (statistik, ingen språkmodell). */
+async function normtidCard(pid) {
+  const [proj, all] = await Promise.all([api(`/api/normtid?project_id=${pid}`), api('/api/normtid')]);
+  const block = (title, r, scope) => {
+    const st = r.stats;
+    if (!st.n) return html`<p class="small muted">${title} (${scope}): inga kvittenser med tid ännu.</p>`;
+    return html`<p class="small"><b>${title}</b> (${scope}): median <b>${fmt(st.median_min, 1)} min</b> · medel ${fmt(st.mean_min, 1)} · p25–p75 ${fmt(st.p25_min, 1)}–${fmt(st.p75_min, 1)} · n=${st.n} (${st.n_angiven} angivna, ${st.n_harledd} härledda)${st.ci95_median_min ? ` · 95 % intervall ${fmt(st.ci95_median_min[0], 1)}–${fmt(st.ci95_median_min[1], 1)} min` : ''}
+      ${r.suggestion?.field ? html`<br><button type="button" data-normtid="${r.suggestion.hours}">Använd ${fmt(r.suggestion.hours, 3)} h/st i kalkylen</button>` : !r.suggestion ? html`<br><span class="muted">Förslag ges från ${proj.min_samples} kvittenser.</span>` : ''}</p>`;
+  };
+  return html`<div class="card" style="margin-top:16px"><h2>Normtider från uppföljning</h2>
+    <p class="small muted">Räknas fram ur montörernas och produktionens kvittenser (statistik – ingen AI-gissning). ${proj.note}</p>
+    ${block('Montage', proj.montage, 'detta projekt')}${block('Montage', all.montage, 'alla projekt')}
+    ${block('Produktion', proj.produktion, 'detta projekt')}${block('Produktion', all.produktion, 'alla projekt')}</div>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -757,6 +921,7 @@ async function viewProduction(pid, code) {
         <div class="row"><h2 style="margin:0">Arbetsmoment</h2><span class="spacer"></span><span class="muted small">${idx >= 0 ? `${idx + 1} av ${queue.length} i kö` : ''}</span></div>
         <ol class="steps" style="margin-top:10px">${steps.map((s, i) => html`<li><input type="checkbox" data-step="${i}" ${isOp ? '' : raw('disabled')}><span>${raw(s)}</span></li>`)}</ol>
         <div class="grid" style="margin-top:14px">
+          ${isOp ? html`<label class="f">Tidsåtgång (minuter, valfritt)<input id="dur" type="number" min="1" max="600" step="1" inputmode="numeric"></label>` : ''}
           <button class="primary big" id="done" ${canProduce ? '' : raw('disabled')}>✔ Klar – skriv ut etikett</button>
           ${isOp ? html`<div class="row">${state.meta.issues.produktion.map((i) => html`<button data-issue="${i}">${i}</button>`)}${h.issue ? html`<button data-issue="">Avsluta avvikelse</button>` : ''}</div>` : ''}
           <div class="row">
@@ -772,7 +937,7 @@ async function viewProduction(pid, code) {
   $('#done')?.addEventListener('click', async () => {
     const unchecked = $$('[data-step]').filter((c) => !c.checked).length;
     if (unchecked && !confirm(`${unchecked} moment är inte avbockade. Markera ändå som klar?`)) return;
-    await act(() => api(`/api/projects/${pid}/hangers/${code}/status`, { body: { status: 'producerad', comment: 'Egenkontroll utförd' } }), `${code} producerad`);
+    await act(() => api(`/api/projects/${pid}/hangers/${code}/status`, { body: { status: 'producerad', comment: 'Egenkontroll utförd', duration_min: $('#dur')?.value ? Number($('#dur').value) : null } }), `${code} producerad`);
     window.open(`/api/projects/${pid}/labels.pdf?codes=${code}`, '_blank');
     const rest = queue.filter((x) => x.code !== code);
     location.hash = rest.length ? `#/p/${pid}/production/${rest[Math.min(Math.max(idx, 0), rest.length - 1)].code}` : `#/p/${pid}/production`;
@@ -874,6 +1039,7 @@ async function viewMontage(pid, code) {
     ${hangerSVG(d, { width: 520 })}
     ${isM ? html`<form id="rep" class="grid" style="margin-top:12px">
       <textarea name="comment" rows="2" placeholder="Kommentar (valfritt)" style="font-family:inherit"></textarea>
+      <label class="f">Tidsåtgång för montaget (minuter, valfritt – förbättrar normtiderna)<input type="number" name="duration_min" min="1" max="600" step="1" inputmode="numeric"></label>
       <label class="f">Foto<input type="file" name="photo" accept="image/*" capture="environment"></label>
       ${h.status !== 'monterad' ? html`<button class="primary big" name="action" value="monterad" ${['levererad', 'packad'].includes(h.status) ? '' : raw('disabled')}>✔ Monterad</button>` : ''}
       <div class="row">${state.meta.issues.montor.map((i) => html`<button name="action" value="${i}">${i.replace('_', ' ')}</button>`)}${h.issue ? html`<button name="action" value="avsluta">Avsluta avvikelse</button>` : ''}<button name="action" value="kommentar">Spara kommentar/foto</button></div>
@@ -889,6 +1055,7 @@ async function viewMontage(pid, code) {
     const fd = new FormData(e.target);
     fd.set('action', action || 'kommentar');
     if (!fd.get('photo')?.size) fd.delete('photo');
+    if (!fd.get('duration_min') || (action || 'kommentar') !== 'monterad') fd.delete('duration_min');
     await act(() => api(`/api/projects/${pid}/hangers/${code}/report`, { body: fd }), 'Registrerat');
     if (action === 'monterad' && after) location.hash = `#/p/${pid}/montage/${after.code}`;
     else viewMontage(pid, code);
@@ -990,8 +1157,17 @@ async function viewCalc(pid) {
         <h3>Rördimensioner</h3>
         <table class="small"><tbody>${Object.entries(c.dimensions).map(([k, v]) => html`<tr><td>${k}</td><td class="num">${fmt(v, 1)} m</td></tr>`)}</tbody></table>
       </div>
-    </div>`.s;
+    </div>
+    <div id="normtid"></div>`.s;
   render(c.result);
+  normtidCard(pid).then((h) => {
+    $('#normtid').innerHTML = h.s;
+    $$('[data-normtid]').forEach((b) => b.addEventListener('click', () => {
+      $('#cf [name=normtid_sh_h_per_hanger]').value = b.dataset.normtid;
+      $('#cf').dispatchEvent(new Event('input'));
+      toast('Normtiden är ifylld – spara kalkylen för att behålla den');
+    }));
+  }).catch(() => {});
   const readForm = () => { const f = new FormData($('#cf')); for (const k of Object.keys(labels)) inputs[k] = Number(f.get(k)); return inputs; };
   let tmo;
   $('#cf').addEventListener('input', () => { clearTimeout(tmo); tmo = setTimeout(async () => { const r = await api(`/api/projects/${pid}/calc?preview=true`, { body: { inputs: readForm() } }); render(r.result); }, 250); });
@@ -1054,7 +1230,9 @@ async function viewRules(rid) {
         <p class="small muted">Regelområden: klamringsavstånd, placering, last, hangergeometri, infästning, miljö, tolerans samt artikelregister.</p>
         <textarea id="json" rows="40" ${editable ? '' : raw('readonly')}>${JSON.stringify(c, null, 2)}</textarea>
       </div>
-    </div>`.s;
+    </div>
+    ${datasheetCard(sel)}`.s;
+  bindDatasheet(sel);
   $('#rs').onchange = (e) => { location.hash = `#/rules/${e.target.value}`; };
   const parse = () => { try { return JSON.parse($('#json').value); } catch (e) { toast('Ogiltig JSON: ' + e.message, true); throw e; } };
   $('#draft')?.addEventListener('click', async () => {
