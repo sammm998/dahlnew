@@ -5,3 +5,4 @@ __pycache__/
 *.sqlite
 /backend/data/
 .pytest_cache/
+*.egg-info/
