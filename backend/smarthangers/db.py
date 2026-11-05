@@ -246,6 +246,9 @@ class Calculation(Base):
 
 def make_engine(url: Optional[str] = None):
     url = url or os.environ.get("DATABASE_URL")
+    if url and url.startswith(("postgres://", "postgresql://")):
+        # Railway/Heroku ger postgres(ql)://; SQLAlchemy behöver drivrutinen angiven (psycopg 3)
+        url = "postgresql+psycopg://" + url.split("://", 1)[1]
     if not url:
         data_dir().mkdir(parents=True, exist_ok=True)
         url = f"sqlite:///{data_dir() / 'smarthangers.db'}"

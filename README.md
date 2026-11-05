@@ -42,6 +42,15 @@ cd backend && python -m pytest
 
 Data sparas i `backend/data/` (SQLite, uppladdade modeller och foton). Med miljövariabeln `SMARTHANGERS_DATA` styr du katalogen, med `DATABASE_URL` byter du databas (t.ex. `postgresql+psycopg://…`, kräver `pip install -e "backend[postgres]"`) och med `PUBLIC_BASE_URL` sätter du basadressen som QR-koderna pekar på.
 
+## Driftsätta på Railway
+
+Repot har en `Dockerfile` och en `railway.json` i roten, så Railway bygger med Docker. Railpacks autodetektering hittar inte appen eftersom Python-projektet ligger i `backend/`.
+
+- Railway sätter `PORT` automatiskt.
+- `SMARTHANGERS_SEED_DEMO=1` skapar demoprojektet vid start (valfritt).
+- **Spara data:** containerns filsystem töms vid varje deploy. Lägg till en **Volume** monterad på `/data` (där hamnar uppladdade modeller, foton och SQLite), eller koppla en Railway-Postgres så att `DATABASE_URL` sätts. Uppladdade filer kräver ändå en volym.
+- `PUBLIC_BASE_URL=https://<din-domän>` gör att QR-koderna pekar rätt.
+
 ## Flöde
 
 | Steg | Var | Vad händer |
