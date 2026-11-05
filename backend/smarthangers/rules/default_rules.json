@@ -1,0 +1,176 @@
+{
+  "meta": {
+    "name": "Standardregler (EXEMPEL)",
+    "description": "EXEMPELVÄRDEN – INTE VERIFIERADE. Samtliga värden är platshållare för utveckling och test och ska ersättas och verifieras av tekniskt sakkunnig (AMA VVS & Kyla, tillverkarens data, lastberäkning) innan regelverket används för konstruktionsgodkännande.",
+    "units": "mm, kg"
+  },
+  "materials": {
+    "aliases": {
+      "Koppar": ["koppar", "copper", "cu"],
+      "Stål": ["stål", "stal", "steel", "svart stål", "galv", "förzinkat"],
+      "Rostfritt": ["rostfritt", "rostfri", "stainless", "syrafast"],
+      "PEX": ["pex", "pe-x", "alupex", "komposit"],
+      "Plast": ["pp", "pvc", "pe", "plast", "abs"],
+      "Gjutjärn": ["gjutjärn", "gjutjarn", "cast iron", "sml"]
+    }
+  },
+  "spacing": {
+    "description": "Maximalt klamringsavstånd (mm) per material och ytterdiameter. EXEMPELVÄRDEN.",
+    "table": [
+      {"material": "Koppar", "od_min": 0, "od_max": 15, "horizontal": 1200, "vertical": 1800},
+      {"material": "Koppar", "od_min": 15.01, "od_max": 28, "horizontal": 1800, "vertical": 2400},
+      {"material": "Koppar", "od_min": 28.01, "od_max": 54, "horizontal": 2400, "vertical": 3000},
+      {"material": "Koppar", "od_min": 54.01, "od_max": 108, "horizontal": 3000, "vertical": 3600},
+      {"material": "Stål", "od_min": 0, "od_max": 34, "horizontal": 2000, "vertical": 2500},
+      {"material": "Stål", "od_min": 34.01, "od_max": 61, "horizontal": 2700, "vertical": 3200},
+      {"material": "Stål", "od_min": 61.01, "od_max": 115, "horizontal": 3500, "vertical": 4000},
+      {"material": "Stål", "od_min": 115.01, "od_max": 220, "horizontal": 4500, "vertical": 5000},
+      {"material": "Rostfritt", "od_min": 0, "od_max": 35, "horizontal": 1800, "vertical": 2400},
+      {"material": "Rostfritt", "od_min": 35.01, "od_max": 110, "horizontal": 2700, "vertical": 3200},
+      {"material": "PEX", "od_min": 0, "od_max": 32, "horizontal": 800, "vertical": 1200},
+      {"material": "PEX", "od_min": 32.01, "od_max": 75, "horizontal": 1200, "vertical": 1600},
+      {"material": "Plast", "od_min": 0, "od_max": 50, "horizontal": 800, "vertical": 1200},
+      {"material": "Plast", "od_min": 50.01, "od_max": 160, "horizontal": 1200, "vertical": 2000},
+      {"material": "Gjutjärn", "od_min": 0, "od_max": 250, "horizontal": 2000, "vertical": 2500}
+    ],
+    "modifiers": [
+      {"description": "Isolerade rör: reducerat avstånd (exempel)", "when": {"insulated": true}, "factor": 0.9}
+    ]
+  },
+  "placement": {
+    "description": "Placeringsregler längs stråket (mm). EXEMPELVÄRDEN.",
+    "max_from_run_end": 500,
+    "max_from_bend": 400,
+    "max_from_branch": 400,
+    "max_from_pointload": 300,
+    "penetration_clearance": 150,
+    "joint_clearance": 75,
+    "fitting_clearance": 50,
+    "min_hanger_spacing": 300,
+    "position_step": 10
+  },
+  "segmentation": {
+    "description": "Parametrar för att dela upp rör i stråk.",
+    "horizontal_tolerance_deg": 1.5,
+    "vertical_tolerance_deg": 10,
+    "parallel_tolerance_deg": 2.0,
+    "collinear_offset": 5,
+    "collinear_gap": 30,
+    "max_pipe_gap": 450,
+    "max_run_width": 900,
+    "max_level_difference": 400,
+    "min_overlap": 300,
+    "level_change_xy_tolerance": 60,
+    "branch_tolerance": 60
+  },
+  "load": {
+    "description": "Lastregler. Vikter i kg/m (rör + medium). EXEMPELVÄRDEN – ska ersättas med tillverkardata.",
+    "pipe_weight": [
+      {"material": "Koppar", "od_min": 0, "od_max": 15, "kg_per_m": 0.45},
+      {"material": "Koppar", "od_min": 15.01, "od_max": 28, "kg_per_m": 1.0},
+      {"material": "Koppar", "od_min": 28.01, "od_max": 42, "kg_per_m": 2.0},
+      {"material": "Koppar", "od_min": 42.01, "od_max": 54, "kg_per_m": 3.4},
+      {"material": "Koppar", "od_min": 54.01, "od_max": 108, "kg_per_m": 10.0},
+      {"material": "Stål", "od_min": 0, "od_max": 34, "kg_per_m": 3.0},
+      {"material": "Stål", "od_min": 34.01, "od_max": 61, "kg_per_m": 6.5},
+      {"material": "Stål", "od_min": 61.01, "od_max": 115, "kg_per_m": 16.0},
+      {"material": "Stål", "od_min": 115.01, "od_max": 220, "kg_per_m": 45.0},
+      {"material": "Rostfritt", "od_min": 0, "od_max": 110, "kg_per_m": 6.0},
+      {"material": "PEX", "od_min": 0, "od_max": 75, "kg_per_m": 1.5},
+      {"material": "Plast", "od_min": 0, "od_max": 160, "kg_per_m": 4.0},
+      {"material": "Gjutjärn", "od_min": 0, "od_max": 250, "kg_per_m": 20.0}
+    ],
+    "insulation_kg_per_m_per_10mm": 0.15,
+    "pointload_extra_kg": 5.0,
+    "safety_factor": 1.5,
+    "rod_capacity_kg": {"M8": 60, "M10": 100, "M12": 150, "M16": 280},
+    "takjarn_capacity_kg": 400,
+    "fastening_capacity_kg": 150
+  },
+  "geometry": {
+    "description": "Hangergeometri. EXEMPELVÄRDEN.",
+    "takjarn_profile": "TJ-41x41",
+    "takjarn_edge_margin": 50,
+    "takjarn_min_length": 200,
+    "takjarn_length_step": 10,
+    "takjarn_height": 41,
+    "max_pipes_per_takjarn": 6,
+    "rod_engagement": 20,
+    "rod_round_step": 5,
+    "rod_min_length": 60,
+    "rod_max_length": 1500,
+    "default_rod": "M10",
+    "nuts_per_rod": 2,
+    "fastenings_per_takjarn_short": 1,
+    "fastenings_per_takjarn_long": 2,
+    "fastening_long_threshold": 400,
+    "default_ceiling_clearance": 250
+  },
+  "clamps": {
+    "description": "Svep/klammer per ytterdiameter. rod_offset = avstånd från rörets överkant (inkl. isolering) till svepets gänganslutning (mm). EXEMPEL.",
+    "table": [
+      {"od_min": 0, "od_max": 15.9, "article": "SV-015", "name": "Svep 12–15 mm", "rod_offset": 18, "kg": 0.08},
+      {"od_min": 16, "od_max": 22.9, "article": "SV-022", "name": "Svep 18–22 mm", "rod_offset": 20, "kg": 0.09},
+      {"od_min": 23, "od_max": 28.9, "article": "SV-028", "name": "Svep 25–28 mm", "rod_offset": 22, "kg": 0.10},
+      {"od_min": 29, "od_max": 35.9, "article": "SV-035", "name": "Svep 32–35 mm", "rod_offset": 24, "kg": 0.12},
+      {"od_min": 36, "od_max": 42.9, "article": "SV-042", "name": "Svep 40–42 mm", "rod_offset": 25, "kg": 0.14},
+      {"od_min": 43, "od_max": 54.9, "article": "SV-054", "name": "Svep 48–54 mm", "rod_offset": 26, "kg": 0.16},
+      {"od_min": 55, "od_max": 76.9, "article": "SV-076", "name": "Svep 60–76 mm", "rod_offset": 30, "kg": 0.22},
+      {"od_min": 77, "od_max": 89.9, "article": "SV-089", "name": "Svep 80–89 mm", "rod_offset": 32, "kg": 0.28},
+      {"od_min": 90, "od_max": 114.9, "article": "SV-114", "name": "Svep 108–114 mm", "rod_offset": 35, "kg": 0.35},
+      {"od_min": 115, "od_max": 168.9, "article": "SV-168", "name": "Svep 140–168 mm", "rod_offset": 40, "kg": 0.55}
+    ],
+    "insulated_suffix": "-ISO",
+    "insulated_name_suffix": " (isolerad)"
+  },
+  "fastening": {
+    "description": "Infästning i underlag. EXEMPEL.",
+    "table": [
+      {"substrate": "Betong", "fire": false, "article": "IF-EXP-M10", "name": "Expanderankare M10", "edge_distance": 100, "load_class": "B"},
+      {"substrate": "Betong", "fire": true, "article": "IF-STA-M10", "name": "Stålankare M10, brandklassat", "edge_distance": 100, "load_class": "B"},
+      {"substrate": "Stål", "fire": false, "article": "IF-BAL-M10", "name": "Balkklammer M10", "edge_distance": 0, "load_class": "B"},
+      {"substrate": "Stål", "fire": true, "article": "IF-BAL-M10", "name": "Balkklammer M10", "edge_distance": 0, "load_class": "B"},
+      {"substrate": "Trä", "fire": false, "article": "IF-TRA-8", "name": "Träskruv 8x60", "edge_distance": 50, "load_class": "A"},
+      {"substrate": "Trä", "fire": true, "article": "IF-TRA-8", "name": "Träskruv 8x60", "edge_distance": 50, "load_class": "A"}
+    ]
+  },
+  "environment": {
+    "description": "Ytbehandling per korrosivitetsklass. EXEMPEL.",
+    "table": [
+      {"class": "C1", "surface": "Elförzinkad", "suffix": "EZ"},
+      {"class": "C2", "surface": "Elförzinkad", "suffix": "EZ"},
+      {"class": "C3", "surface": "Varmförzinkad", "suffix": "VFZ"},
+      {"class": "C4", "surface": "Varmförzinkad", "suffix": "VFZ"},
+      {"class": "C5", "surface": "Rostfri A4", "suffix": "A4"}
+    ],
+    "incompatible": [
+      {"pipe_material": "Koppar", "surface": "Varmförzinkad", "message": "Koppar mot förzinkat stål: använd svep med gummiinlägg."}
+    ]
+  },
+  "tolerance": {
+    "description": "Toleranser (mm). EXEMPEL.",
+    "cut_length": 2,
+    "mounting_xy": 20,
+    "mounting_z": 5,
+    "position_window": 100,
+    "revision_move_tolerance": 5,
+    "hanger_match_distance": 150
+  },
+  "articles": {
+    "description": "Artikelregister med lagerlängder (mm) och vikter. EXEMPEL.",
+    "takjarn": {"TJ-41x41": {"name": "Takjärn 41x41", "stock_length": 3000, "kg_per_m": 1.8, "kerf": 3}},
+    "rod": {
+      "M8": {"article": "GS-M8", "name": "Gängstång M8", "stock_length": 2000, "kg_per_m": 0.32, "kerf": 2, "nut": "MU-M8"},
+      "M10": {"article": "GS-M10", "name": "Gängstång M10", "stock_length": 2000, "kg_per_m": 0.48, "kerf": 2, "nut": "MU-M10"},
+      "M12": {"article": "GS-M12", "name": "Gängstång M12", "stock_length": 2000, "kg_per_m": 0.70, "kerf": 2, "nut": "MU-M12"},
+      "M16": {"article": "GS-M16", "name": "Gängstång M16", "stock_length": 2000, "kg_per_m": 1.25, "kerf": 2, "nut": "MU-M16"}
+    },
+    "nut": {
+      "MU-M8": {"name": "Mutter M8", "kg": 0.005},
+      "MU-M10": {"name": "Mutter M10", "kg": 0.01},
+      "MU-M12": {"name": "Mutter M12", "kg": 0.015},
+      "MU-M16": {"name": "Mutter M16", "kg": 0.03}
+    },
+    "fastening_kg": 0.1
+  }
+}
